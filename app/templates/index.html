@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Episode Matcher (Unraid AI Tool)</title>
+    <!-- Simple, clean CSS framework -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <style>
+        .log-container {
+            height: 400px;
+            overflow-y: auto;
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            font-family: monospace;
+            border-radius: 5px;
+        }
+        .log-entry { margin-bottom: 5px; }
+        .log-time { color: #f39c12; margin-right: 10px; }
+        .log-file { color: #3498db; font-weight: bold; margin-right: 10px; }
+    </style>
+</head>
+<body>
+    <section class="section">
+        <div class="container">
+            <h1 class="title">🎬 AI Episode Matcher & Renamer</h1>
+            <p class="subtitle">Extracts audio, transcribes it locally with GPU, and uses Ollama to find the exact Plex episode name.</p>
+            
+            <div class="columns">
+                <!-- Form Section -->
+                <div class="column is-one-third">
+                    <div class="box">
+                        <form id="startForm">
+                            <div class="field">
+                                <label class="label">Show Name</label>
+                                <div class="control">
+                                    <input class="input" type="text" id="showName" name="show_name" placeholder="e.g., The Office" required>
+                                </div>
+                                <p class="help">The exact title of the TV show to look up metadata for.</p>
+                            </div>
+                            
+                            <div class="field">
+                                <label class="label">Directory Path (Inside Container)</label>
+                                <div class="control">
+                                    <input class="input" type="text" id="directory" name="directory" placeholder="e.g., /data/TV Shows/The Office/Season 1" required>
+                                </div>
+                                <p class="help">Ensure you mapped your Unraid media share to <code>/data</code> in the Compose file.</p>
+                            </div>
+                            
+                            <div class="field mt-5">
+                                <div class="control">
+                                    <button type="submit" id="startBtn" class="button is-primary is-fullwidth">Start Batch Processing</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                
+                <!-- Live Logs Section -->
+                <div class="column">
+                    <div class="box">
+                        <h2 class="title is-4">Live Progress</h2>
+                        <div id="logs" class="log-container">
+                            <div class="log-entry">Waiting to start...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <script>
+        const form = document.getElementById('startForm');
+        const logsContainer = document.getElementById('logs');
+        const startBtn = document.getElementById('startBtn');
+        
+        // Connect to WebSocket for real-time progress updates
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+        
+        let ws;
+        
+        function connectWebSocket() {
+            ws = new WebSocket(wsUrl);
+            
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                const now = new Date();
+                const timeString = now.toLocaleTimeString();
+                
+                const entry = document.createElement('div');
+                entry.className = 'log-entry';
+                entry.innerHTML = `<span class="log-time">[${timeString}]</span> <span class="log-file">${data.file}:</span> ${data.message}`;
+                
+                logsContainer.appendChild(entry);
+                // Auto-scroll to bottom
+                logsContainer.scrollTop = logsContainer.scrollHeight;
+            };
+            
+            ws.onclose = function() {
+                console.log("WebSocket connection closed. Trying to reconnect...");
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+        
+        connectWebSocket();
+
+        // Handle Form Submission
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            startBtn.classList.add('is-loading');
+            startBtn.disabled = true;
+            
+            const formData = new FormData(form);
+            
+            try {
+                const response = await fetch('/start', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error("Failed to start processing.");
+                }
+                
+                // Clear old logs when starting a new batch
+                logsContainer.innerHTML = '';
+                
+            } catch (error) {
+                alert("Error starting batch: " + error.message);
+                startBtn.classList.remove('is-loading');
+                startBtn.disabled = false;
+            }
+            
+            // Re-enable button after a brief delay so user knows it fired
+            setTimeout(() => {
+                startBtn.classList.remove('is-loading');
+                startBtn.disabled = false;
+            }, 2000);
+        });
+    </script>
+</body>
+</html>
