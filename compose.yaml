@@ -6,41 +6,40 @@ services:
     container_name: episode-matcher
     restart: unless-stopped
     ports:
-      - "8000:8000" # Web UI accessible at http://<unraid-ip>:8000
+      - "8000:8000" # Web UI at http://<your-ip>:8000
     environment:
-      # --- REQUIRED SETTINGS ---
-      
-      # URL to your Ollama container. If it's on the same host, use the host IP, e.g., http://192.168.1.10:11434
-      - OLLAMA_URL=http://<YOUR_UNRAID_IP>:11434 
-      
-      # The Ollama model to use for matching. 'llama3' or 'mistral' are good choices. 
-      # Ensure you have pulled this model in your Ollama container!
-      - OLLAMA_MODEL=mistral 
-      
-      # --- OPTIONAL SETTINGS ---
-      
-      # TMDB API Key (Optional). If left blank, the app will fall back to using the free TVmaze API.
+      # ---------------------------------------------------------------
+      # REQUIRED: OpenSubtitles API key
+      # Register for free at https://www.opensubtitles.com/en/consumers
+      # Used for hash-based episode lookup (primary) and subtitle
+      # downloads for transcript matching (fallback).
+      # Free tier: 5 req/sec, 40 subtitle downloads/day (cached locally).
+      # ---------------------------------------------------------------
+      - OPENSUBTITLES_API_KEY=
+
+      # ---------------------------------------------------------------
+      # OPTIONAL: metadata source
+      # Leave TMDB_API_KEY blank to use the free TVmaze API instead.
+      # ---------------------------------------------------------------
       - TMDB_API_KEY=
-      
-      # Faster-Whisper model size. Options: tiny, base, small, medium, large-v3.
-      # For an A4000 GPU, 'base' or 'small' are extremely fast, 'medium' is a good balance.
+
+      # ---------------------------------------------------------------
+      # OPTIONAL: Whisper settings (only used when hash lookup fails)
+      # Model sizes: tiny | base | small | medium | large-v3
+      # Device: cuda (A4000) or cpu
+      # ---------------------------------------------------------------
       - WHISPER_MODEL_SIZE=base
-      
-      # Which device faster-whisper should use (cuda or cpu). We want cuda since you have an A4000.
       - WHISPER_DEVICE=cuda
 
     volumes:
-      # --- MEDIA DIRECTORIES ---
-      # This is CRITICAL. Map your Unraid media shares into the container so it can read/rename files.
-      # Format: /mnt/user/your_share_name:/data
-      # Inside the Web UI, you will type `/data/TV Shows/The Office`
-      - /mnt/user/media:/data:rw 
-      
-      # Map a cache directory for Faster-Whisper so it doesn't re-download the model on every restart
-      - ./whisper_cache:/root/.cache/huggingface
+      # Map your media share into the container (read-write so we can rename files).
+      # In the UI, type /data/TV Shows/The Office/Season 1
+      - /mnt/user/media:/data:rw
 
-    # --- GPU PASSTHROUGH (Crucial for A4000) ---
-    # This section tells Docker to make your NVIDIA GPU available to the container.
+      # Persist the Whisper model and subtitle cache between container restarts.
+      - ./whisper_cache:/root/.cache/huggingface
+      - ./subtitle_cache:/app/subtitle_cache
+
     deploy:
       resources:
         reservations:
