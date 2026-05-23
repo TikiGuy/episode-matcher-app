@@ -96,6 +96,7 @@ def match_episode(
     episodes: list[EpisodeInfo],
     show_name: str,
     transcript: Optional[str] = None,
+    skip_hash: bool = False,
 ) -> Optional[tuple[EpisodeInfo, str]]:
     """
     Full matching pipeline. Returns (EpisodeInfo, method_description) or None.
@@ -104,13 +105,14 @@ def match_episode(
     Stage 2 — Transcript matching: requires Whisper transcript, uses subtitle cache.
     """
     # Stage 1: hash lookup
-    hash_result = match_by_hash(filepath)
-    if hash_result:
-        season, episode = hash_result["season"], hash_result["episode"]
-        for ep in episodes:
-            if ep.season == season and ep.episode == episode:
-                return ep, "hash lookup"
-        logger.warning(f"Hash returned S{season:02d}E{episode:02d} but that episode isn't in the metadata.")
+    if not skip_hash:
+        hash_result = match_by_hash(filepath)
+        if hash_result:
+            season, episode = hash_result["season"], hash_result["episode"]
+            for ep in episodes:
+                if ep.season == season and ep.episode == episode:
+                    return ep, "hash lookup"
+            logger.warning(f"Hash returned S{season:02d}E{episode:02d} but that episode isn't in the metadata.")
 
     # Stage 2: transcript-based subtitle matching
     if transcript:
