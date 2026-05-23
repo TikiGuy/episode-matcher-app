@@ -26,7 +26,7 @@ services:
       # ---------------------------------------------------------------
       # OPTIONAL: Whisper settings (only used when hash lookup fails)
       # Model sizes: tiny | base | small | medium | large-v3
-      # Device: cuda (A4000) or cpu
+      # Device: cuda or cpu
       # ---------------------------------------------------------------
       - WHISPER_MODEL_SIZE=base
       - WHISPER_DEVICE=cuda
