@@ -1,104 +1,122 @@
-import json
 import logging
-from typing import Optional, Tuple
-from ollama import Client
-from pydantic_settings import BaseSettings
+from typing import Optional
+
 from app.metadata import EpisodeInfo
+from app.opensubtitles import compute_hash, os_client
 
 logger = logging.getLogger(__name__)
 
-class Settings(BaseSettings):
-    ollama_url: str = "http://localhost:11434"
-    ollama_model: str = "mistral"
+# Minimum fraction of transcript trigrams that must appear in an episode's
+# subtitle text to count as a confident match. Tune upward if you get false
+# positives; lower it if correct episodes are being skipped.
+TRIGRAM_THRESHOLD = 0.08
 
-settings = Settings()
 
-# Ensure URL does not have a trailing slash for the python client
-if settings.ollama_url.endswith('/'):
-    settings.ollama_url = settings.ollama_url[:-1]
+def _trigrams(text: str) -> set[str]:
+    words = text.lower().split()
+    return {' '.join(words[i:i + 3]) for i in range(len(words) - 2)}
 
-ollama_client = Client(host=settings.ollama_url)
 
-def match_episode(transcript: str, episodes: list[EpisodeInfo]) -> Optional[EpisodeInfo]:
+def match_by_hash(filepath: str) -> Optional[dict]:
     """
-    Uses an LLM via Ollama to match a transcript against a list of episode summaries.
-    Returns the matching EpisodeInfo object, or None if no match is found.
+    Primary path: compute the OpenSubtitles file hash and look up the episode.
+    Returns {season, episode, title} on success, None otherwise.
+    No audio extraction or transcription needed.
     """
-    logger.info(f"Attempting to match transcript against {len(episodes)} episodes using model '{settings.ollama_model}' at '{settings.ollama_url}'")
-    
-    if not episodes:
-        logger.error("No episodes provided to match against.")
-        return None
-
-    # Construct the context mapping Season/Episode to the Summary
-    episodes_context = ""
-    for ep in episodes:
-        # Limit summary length to save token space if needed, though usually fine
-        summary = ep.summary[:500] + "..." if len(ep.summary) > 500 else ep.summary
-        episodes_context += f"Season {ep.season}, Episode {ep.episode}:\n{summary}\n\n"
-
-    prompt = f"""You are an expert TV show metadata matcher. I will provide you with a raw transcript extracted from a 5-minute audio chunk of a TV show episode. 
-I will also provide you with a list of episode summaries for the entire series.
-
-Your task is to analyze the transcript, identify key character names, plot points, or unique dialogue, and match it to EXACTLY ONE episode from the provided summaries.
-
-Here is the transcript:
-\"\"\"{transcript}\"\"\"
-
-Here are the episode summaries:
-\"\"\"{episodes_context}\"\"\"
-
-You MUST output your response in valid JSON format. Do not include any other text, markdown formatting, or explanation. Just the JSON object.
-If you are confident in a match, return the exact Season number and Episode number as integers.
-If you cannot find a match, or the transcript is too vague, return null for both.
-
-Example output format for a match:
-{{
-  "season": 1,
-  "episode": 4
-}}
-
-Example output format for no match:
-{{
-  "season": null,
-  "episode": null
-}}
-"""
-
     try:
-        response = ollama_client.chat(model=settings.ollama_model, messages=[
-            {
-                'role': 'user',
-                'content': prompt
-            }
-        ], format='json')
-        
-        response_text = response['message']['content'].strip()
-        logger.debug(f"LLM Response: {response_text}")
-        
-        # Parse the JSON response
-        result = json.loads(response_text)
-        
-        season = result.get('season')
-        episode = result.get('episode')
-        
-        if season is not None and episode is not None:
-            # Find the matching EpisodeInfo object
-            for ep in episodes:
-                if ep.season == int(season) and ep.episode == int(episode):
-                    logger.info(f"Match found! Season {season}, Episode {episode}")
-                    return ep
-            
-            logger.warning(f"LLM returned S{season}E{episode}, but this episode does not exist in the metadata.")
-            return None
-        else:
-            logger.info("LLM could not determine a match.")
-            return None
-            
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse LLM response as JSON: {e}")
-        logger.error(f"Raw response: {response_text}")
-        return None
+        file_hash, filesize = compute_hash(filepath)
+        logger.info(f"File hash: {file_hash}  size: {filesize}")
+        return os_client.hash_lookup(file_hash, filesize)
     except Exception as e:
-        logger.error(f"Error communicating with Ollama: {e}")
+        logger.error(f"Hash computation/lookup failed: {e}")
         return None
+
+
+def match_by_transcript(
+    transcript: str,
+    episodes: list[EpisodeInfo],
+    show_name: str,
+) -> Optional[tuple[EpisodeInfo, float]]:
+    """
+    Fallback path: compare a Whisper transcript against cached episode subtitle
+    text using trigram overlap. Returns (EpisodeInfo, score_0_to_100) or None.
+
+    Why trigrams: 3-word sequences from real dialogue are distinctive enough
+    to discriminate between episodes while tolerating ~1 word of ASR error per
+    trigram. Common stop words appear in every episode and naturally wash out.
+    """
+    if not transcript or len(transcript.split()) < 20:
+        return None
+
+    transcript_trigrams = _trigrams(transcript)
+    if not transcript_trigrams:
+        return None
+
+    scores: list[tuple[float, EpisodeInfo]] = []
+
+    for ep in episodes:
+        subtitle_text = os_client.get_episode_subtitle_text(show_name, ep.season, ep.episode)
+        if not subtitle_text:
+            continue
+
+        ep_trigrams = _trigrams(subtitle_text)
+        if not ep_trigrams:
+            continue
+
+        overlap = len(transcript_trigrams & ep_trigrams) / len(transcript_trigrams)
+        scores.append((overlap, ep))
+
+    if not scores:
+        logger.warning("No subtitle text available for any episode; transcript matching skipped.")
+        return None
+
+    scores.sort(key=lambda x: x[0], reverse=True)
+    best_score, best_ep = scores[0]
+
+    if best_score < TRIGRAM_THRESHOLD:
+        logger.info(f"Best transcript score {best_score:.3f} is below threshold {TRIGRAM_THRESHOLD}; no match.")
+        return None
+
+    # Require the winner to be clearly ahead of the runner-up to avoid guessing
+    if len(scores) >= 2 and scores[1][0] > 0:
+        runner_up = scores[1][0]
+        if best_score / runner_up < 1.4:
+            logger.warning(
+                f"Ambiguous match: best={best_score:.3f} ({best_ep}), "
+                f"runner-up={runner_up:.3f} ({scores[1][1]}). Skipping."
+            )
+            return None
+
+    logger.info(f"Transcript match: {best_ep} (score={best_score:.3f})")
+    return best_ep, round(best_score * 100, 1)
+
+
+def match_episode(
+    filepath: str,
+    episodes: list[EpisodeInfo],
+    show_name: str,
+    transcript: Optional[str] = None,
+) -> Optional[tuple[EpisodeInfo, str]]:
+    """
+    Full matching pipeline. Returns (EpisodeInfo, method_description) or None.
+
+    Stage 1 — Hash lookup: instant, no audio needed, deterministic.
+    Stage 2 — Transcript matching: requires Whisper transcript, uses subtitle cache.
+    """
+    # Stage 1: hash lookup
+    hash_result = match_by_hash(filepath)
+    if hash_result:
+        season, episode = hash_result["season"], hash_result["episode"]
+        for ep in episodes:
+            if ep.season == season and ep.episode == episode:
+                return ep, "hash lookup"
+        logger.warning(f"Hash returned S{season:02d}E{episode:02d} but that episode isn't in the metadata.")
+
+    # Stage 2: transcript-based subtitle matching
+    if transcript:
+        result = match_by_transcript(transcript, episodes, show_name)
+        if result:
+            ep, score = result
+            return ep, f"transcript match ({score}% confidence)"
+
+    return None

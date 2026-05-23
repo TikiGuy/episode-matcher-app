@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Episode Matcher (Unraid AI Tool)</title>
+    <title>Episode Matcher</title>
     <!-- Simple, clean CSS framework -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
     <style>
@@ -24,8 +24,8 @@
 <body>
     <section class="section">
         <div class="container">
-            <h1 class="title">🎬 AI Episode Matcher & Renamer</h1>
-            <p class="subtitle">Extracts audio, transcribes it locally with GPU, and uses Ollama to find the exact Plex episode name.</p>
+            <h1 class="title">🎬 Episode Matcher & Renamer</h1>
+            <p class="subtitle">Identifies episodes via OpenSubtitles hash lookup — no audio needed for most files. Falls back to Whisper transcription + subtitle matching when the hash isn't found.</p>
             
             <div class="columns">
                 <!-- Form Section -->
