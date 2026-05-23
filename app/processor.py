@@ -13,12 +13,12 @@ logger = logging.getLogger(__name__)
 
 VIDEO_EXTENSIONS = ("*.mkv", "*.mp4", "*.avi", "*.m4v", "*.mov")
 ALREADY_RENAMED_RE = re.compile(r'[sS]\d{2}[eE]\d{2}')
+FILENAME_TRANSLATION_TABLE = str.maketrans('', '', '<>:"/\\|?*')
 
 
 def sanitize_filename(name: str) -> str:
-    for ch in '<>:"/\\|?*':
-        name = name.replace(ch, '')
-    return name.strip()
+    # Use str.translate for faster sanitization of multiple characters
+    return name.translate(FILENAME_TRANSLATION_TABLE).strip()
 
 
 def _find_video_files(directory: str) -> list[str]:
@@ -101,7 +101,7 @@ def process_directory(
                 continue
 
             emit(filename, "Matching transcript against episode subtitles...")
-            result = match_episode(file_path, episodes, show_name, transcript=transcript)
+            result = match_episode(file_path, episodes, show_name, transcript=transcript, skip_hash=True)
 
         if result:
             matched_ep, method = result

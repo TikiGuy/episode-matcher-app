@@ -11,6 +11,8 @@ Two-stage identification pipeline, fastest method first:
 **Stage 1 — File hash lookup (primary)**
 Computes a deterministic hash from the first and last 64 KB of the video file and queries the [OpenSubtitles](https://www.opensubtitles.com) database. Because people upload subtitles for specific disc rips, the same rip produces the same hash. This resolves instantly with no audio processing and is the path most files will take.
 
+*Note on hashing limitations:* The hash method requires an exact, bit-for-bit file match to what was uploaded to OpenSubtitles. If you rip and then re-encode your files (e.g., compressing with Handbrake), or keep a different set of audio tracks, the file size and byte structure change, which guarantees the hash will not match. In these cases, the system will rely entirely on the Stage 2 fallback.
+
 **Stage 2 — Transcript matching (fallback)**
 If the hash isn't in the database, the app extracts a 5-minute audio clip (skipping the intro), transcribes it locally with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) using your GPU, then fuzzy-matches the transcript against cached episode subtitle files. Matching real dialogue against real dialogue (rather than plot summaries) gives a meaningful confidence score. Ambiguous results are skipped rather than guessed.
 
@@ -96,7 +98,7 @@ The hash lookup (Stage 1) does **not** count against the download limit and work
 ## Troubleshooting
 
 **Hash lookup always misses**
-Your rip tool may produce a non-standard file. The fallback transcript path will handle it. Consider trying a different ripping tool (MakeMKV produces files that match well).
+The hash lookup requires a bit-perfect match with the original file that someone uploaded subtitles for. If you re-encode your files (like compressing with Handbrake) or strip out certain audio tracks during your rip, the hash will change and the lookup will miss. The fallback transcript path will handle these custom encodes. Alternatively, consider keeping untouched 1:1 disc rips (MakeMKV produces files that match well) if you want the hash lookup to succeed.
 
 **Transcript matching skips everything**
 If no subtitles are cached yet, the fallback has nothing to compare against. Run the tool on a few known episodes first to seed the cache, or wait for the daily download quota to accumulate over a few days.

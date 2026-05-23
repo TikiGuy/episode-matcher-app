@@ -62,6 +62,7 @@ class OpenSubtitlesClient:
             "User-Agent": f"{settings.opensubtitles_app_name} {settings.opensubtitles_app_version}",
         })
         self._last_request = 0.0
+        self._quota_exceeded = False
         SUBTITLE_CACHE_DIR.mkdir(exist_ok=True)
 
     def _throttle(self):
@@ -121,6 +122,10 @@ class OpenSubtitlesClient:
         if not self.api_key:
             return None
 
+        if self._quota_exceeded:
+            logger.debug(f"Skipping subtitle download for S{season:02d}E{episode:02d} because quota was exceeded.")
+            return None
+
         # Search for English subtitles for this episode
         self._throttle()
         try:
@@ -139,6 +144,9 @@ class OpenSubtitlesClient:
             results = resp.json().get("data", [])
         except requests.RequestException as e:
             logger.error(f"Subtitle search failed for S{season:02d}E{episode:02d}: {e}")
+            if e.response is not None and e.response.status_code in (403, 429):
+                logger.error("OpenSubtitles API quota exceeded or rate limited. Disabling further downloads for this run.")
+                self._quota_exceeded = True
             return None
 
         if not results:
@@ -168,6 +176,9 @@ class OpenSubtitlesClient:
                 return None
         except requests.RequestException as e:
             logger.error(f"Subtitle download request failed: {e}")
+            if e.response is not None and e.response.status_code in (403, 429):
+                logger.error("OpenSubtitles API quota exceeded or rate limited on download. Disabling further downloads for this run.")
+                self._quota_exceeded = True
             return None
 
         # Fetch the SRT file content
