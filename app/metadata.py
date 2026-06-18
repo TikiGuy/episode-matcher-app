@@ -1,6 +1,7 @@
 import re
 import logging
 import requests
+import concurrent.futures
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
@@ -100,11 +101,7 @@ def _fetch_from_tmdb(show_name: str) -> list[EpisodeInfo]:
         details_resp.raise_for_status()
         seasons_data = details_resp.json().get('seasons', [])
 
-        for season in seasons_data:
-            season_num = season['season_number']
-            if season_num == 0:
-                continue
-
+        def fetch_season(season_num):
             season_resp = requests.get(
                 f"https://api.themoviedb.org/3/tv/{show_id}/season/{season_num}",
                 headers=headers,
@@ -112,13 +109,24 @@ def _fetch_from_tmdb(show_name: str) -> list[EpisodeInfo]:
             )
             season_resp.raise_for_status()
 
+            season_episodes = []
             for ep in season_resp.json().get('episodes', []):
-                episodes_list.append(EpisodeInfo(
+                season_episodes.append(EpisodeInfo(
                     season=ep['season_number'],
                     episode=ep['episode_number'],
                     title=ep['name'],
                     summary=ep.get('overview') or "No summary available.",
                 ))
+            return season_episodes
+
+        valid_seasons = [s['season_number'] for s in seasons_data if s['season_number'] != 0]
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            # Map returns results in the same order as valid_seasons
+            results = executor.map(fetch_season, valid_seasons)
+
+            for season_episodes in results:
+                episodes_list.extend(season_episodes)
 
         logger.info(f"TMDB: Retrieved {len(episodes_list)} episodes.")
         return episodes_list
