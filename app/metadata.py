@@ -1,4 +1,6 @@
 import logging
+import re
+
 import requests
 from pydantic_settings import BaseSettings
 
@@ -58,7 +60,6 @@ def _fetch_from_tvmaze(show_name: str) -> list[EpisodeInfo]:
             summary = ep.get('summary', '')
             if summary:
                 # Remove HTML tags returned by TVmaze
-                import re
                 summary = re.sub(r'<[^>]+>', '', summary)
             
             episodes_list.append(EpisodeInfo(
